@@ -7,9 +7,10 @@ build:
   image: latest
 
 python:
-  version: 3.7
+  version: "3.8"
   install:
     - requirements: requirements.txt
-    - method: setuptools
+    - requirements: requirements_dev.txt
+    - method: pip
       path: .
 
