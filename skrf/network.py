@@ -153,13 +153,13 @@ Misc Functions
 
 """
 from typing import (Any, NoReturn, Optional, Sequence,
-    Sized, Union, Tuple, Callable, TYPE_CHECKING, Dict, List)
+    Sized, Union, Tuple, Callable, TYPE_CHECKING, Dict, List, TextIO)
 from numbers import Number
 from functools import reduce
 
 import os
 import warnings
-from io import StringIO
+import io
 from pathlib import Path
 import pickle
 from pickle import UnpicklingError
@@ -196,7 +196,7 @@ if TYPE_CHECKING:
 #from scipy.interpolate import interp1d
 
 class Network(object):
-    """
+    r"""
     A n-port electrical network.
 
     For instructions on how to create Network see  :func:`__init__`.
@@ -346,9 +346,9 @@ class Network(object):
     """
 
     # CONSTRUCTOR
-    def __init__(self, file: str = None, name : str = None, comments: str = None,
-        f_unit: str = None, s_def: str = S_DEF_DEFAULT, **kwargs) -> None:
-        """
+    def __init__(self, file: str = None, name: str = None, comments: str = None,
+                 f_unit: str = None, s_def: str = S_DEF_DEFAULT, **kwargs) -> None:
+        r"""
         Network constructor.
 
         Creates an n-port microwave network from a `file` or directly
@@ -423,12 +423,12 @@ class Network(object):
         else:
             self.s_def = s_def
 
-        if file is not None:              
+        if file is not None:
             if isinstance(file, Path):
                 file = str(file.resolve())
 
             # allows user to pass StringIO, filename or file obj
-            if isinstance(file,StringIO):
+            if isinstance(file, io.StringIO):
                 self.read_touchstone(file)
 
             else:
@@ -440,14 +440,12 @@ class Network(object):
                     self.read(fid)
                 except UnicodeDecodeError:  # Support for pickles created in Python2 and loaded in Python3
                     self.read(fid, encoding='latin1')
-                except (UnpicklingError,TypeError):
+                except (UnpicklingError, TypeError):
                     # if unpickling doesn't work then, close fid, reopen in
                     # non-binary mode and try to read it as touchstone
                     filename = fid.name
                     fid.close()
                     self.read_touchstone(filename)
-
-
 
             if name is None and isinstance(file, str):
                 name = os.path.splitext(os.path.basename(file))[0]
@@ -459,13 +457,11 @@ class Network(object):
         for attr in PRIMARY_PROPERTIES + ['frequency', 'f', 'z0', 'noise', 'noise_freq']:
             if attr in kwargs:
                 self.__setattr__(attr, kwargs[attr])
-
-
                 # self.nports = self.number_of_ports
 
     @classmethod
     def from_z(cls, z: npy.ndarray, *args, **kw) -> 'Network':
-        """
+        r"""
         Create a Network from its Z-parameters
 
         Parameters
@@ -509,6 +505,8 @@ class Network(object):
         cascade
 
         """
+        check_frequency_exist(self)
+
         # if they pass a number then use power operator
         if isinstance(other, Number):
             out = self.copy()
@@ -578,6 +576,8 @@ class Network(object):
         -------
         ntw : :class:`Network`
         """
+        check_frequency_exist(self)
+
         result = self.copy()
 
         if isinstance(other, Network):
@@ -1065,7 +1065,7 @@ class Network(object):
 
         Returns
         -------
-        t : complex numpy.ndarray of shape `fx2x2`
+        t : complex npy.ndarray of shape `fx2x2`
                 t-parameters, aka scattering transfer parameters
 
 
@@ -1487,7 +1487,7 @@ class Network(object):
 
     @property
     def passivity(self) -> ndarray:
-        """
+        r"""
         passivity metric for a multi-port network.
 
         This returns a matrix who's diagonals are equal to the total
@@ -1507,9 +1507,9 @@ class Network(object):
 
         .. math::
 
-                S^H \\cdot S
+                S^H \cdot S
 
-        where :math:`H` is conjugate transpose of S, and :math:`\\cdot`
+        where :math:`H` is conjugate transpose of S, and :math:`\cdot`
         is dot product.
 
         Returns
@@ -1754,7 +1754,7 @@ class Network(object):
         https://en.wikipedia.org/wiki/Unitary_matrix
         """
         for f_idx in range(len(self.s)):
-            mat = npy.matrix(self.s[f_idx, :, :])
+            mat = self.s[f_idx, :, :]
             if not mf.is_unitary(mat, tol=tol):
                 return False
         return True
@@ -1850,7 +1850,7 @@ class Network(object):
         except(AttributeError):
             ntwk.port_names = None
         return ntwk
-    
+
     def drop_non_monotonic_increasing(self) -> None:
         """Drop invalid values based on duplicate and non increasing frequency values
 
@@ -1912,7 +1912,7 @@ class Network(object):
 
 
     # touchstone file IO
-    def read_touchstone(self, filename: str) -> None:
+    def read_touchstone(self, filename: Union[str, TextIO]) -> None:
         """
         loads values from a touchstone file.
 
@@ -1993,8 +1993,6 @@ class Network(object):
                     self.name = ''
                 pass
 
-
-
     @classmethod
     def zipped_touchstone(cls, filename: str, archive: zipfile.ZipFile) -> 'Network':
         """
@@ -2013,9 +2011,12 @@ class Network(object):
             Network from the Touchstone file
 
         """
-        with archive.open(filename) as touchstone_file:
-            ntwk = cls()
-            ntwk.read_touchstone(touchstone_file)
+        # Touchstone requires file objects to be seekable (for get_gamma_z0_from_fid)
+        # A ZipExtFile object is not seekable prior to Python 3.7, so use StringIO
+        # and manually add a name attribute
+        fileobj = io.StringIO(archive.open(filename).read().decode('UTF-8'))
+        fileobj.name = filename
+        ntwk = Network(fileobj)
         return ntwk
 
     def write_touchstone(self, filename: str = None, dir: str = None,
@@ -2111,7 +2112,7 @@ class Network(object):
             """Function which takes a complex number for B part of param and returns an appropriately formatted string"""
             return format_spec_B.format(funcB(c))
 
-        def get_buffer() -> StringIO:
+        def get_buffer() -> io.StringIO:
             if return_string is True or type(to_archive) is zipfile.ZipFile:
                 from .io.general import StringBuffer  # avoid circular import
                 buf = StringBuffer()
@@ -2259,7 +2260,7 @@ class Network(object):
                 return output.getvalue()
 
     def write(self, file: str = None, *args, **kwargs) -> None:
-        """
+        r"""
         Write the Network to disk using the :mod:`pickle` module.
 
         The resultant file can be read either by using the Networks
@@ -2306,7 +2307,7 @@ class Network(object):
         write(file, self, *args, **kwargs)
 
     def read(self, *args, **kwargs) -> None:
-        """
+        r"""
         Read a Network from a 'ntwk' file
 
         A ntwk file is written with :func:`write`. It is just a pickled
@@ -2399,7 +2400,7 @@ class Network(object):
     def interpolate(self, freq_or_n: Union[Frequency, NumberLike], basis: str = 's',
                     coords: str = 'cart', f_kwargs: dict = {}, return_array: bool = False,
                     **kwargs) -> Union['Network', npy.ndarray]:
-        """
+        r"""
         Interpolate a Network along frequency axis
 
         The input 'freq_or_n` can be either a new
@@ -2632,7 +2633,7 @@ class Network(object):
     resample = interpolate_self
 
     def interpolate_from_f(self, f: Frequency, interp_kwargs: dict = {}, **kwargs) -> 'Network':
-        """
+        r"""
         Interpolates s-parameters from a frequency vector.
 
         Given a frequency vector, and optionally a `unit` (see \*\*kwargs)
@@ -2688,7 +2689,7 @@ class Network(object):
             Number of frequency points to be used in interpolation.
             If None number of points is calculated based on the frequency step size
             and spacing between 0 Hz and first measured frequency point.
-        dc_sparam : class:`numpy.ndarray` or None
+        dc_sparam : class:`npy.ndarray` or None
             NxN S-parameters matrix at 0 Hz.
             If None S-parameters at 0 Hz are determined by linear extrapolation.
         kind : str or int
@@ -3099,25 +3100,26 @@ class Network(object):
         """
         Add phase delay to a given port.
 
-        This will cascade a matched line of length `d/2` from a given `media`
-        in front of `port`. If `media==None`, then freespace is used.
+        This will connect a transmission line of length `d/2` to the selected `port`. If no propagation properties are
+        specified for the line (`media=None`), then freespace is assumed to convert a distance `d` into an electrical
+        length. If a phase angle is specified for `d`, it will be evaluated at the center frequency of the network.
 
         Parameters
         ----------
-        d : number
-                the length of transmission line (see unit argument)
+        d : float
+            The angle/length/delay of the transmission line (see `unit` argument)
         unit : ['deg','rad','m','cm','um','in','mil','s','us','ns','ps']
-                the units of d.  See :func:`Media.to_meters`, for details
+            The units of d.  See :func:`Media.to_meters`, for details
         port : int
-            port to add delay to.
+            Port to add the delay to.
         media: skrf.media.Media
-            media object to use for generating delay. If None, this will
+            Media object to use for generating the delay. If None, this will
             default to freespace.
 
         Returns
         -------
         ntwk : :class:`Network` object
-            Resulting delayed Network
+            A delayed copy of the `Network`.
 
         """
         if d ==0:
@@ -3301,7 +3303,7 @@ class Network(object):
 
     # other
     def func_on_parameter(self, func: Callable, attr: str = 's', *args, **kwargs) -> 'Network':
-        """
+        r"""
         Applies a function parameter matrix, one frequency slice at a time
 
         This is useful for functions that can only operate on 2d arrays,
@@ -3337,7 +3339,7 @@ class Network(object):
         return ntwkB
 
     def nonreciprocity(self, m: int, n: int, normalize: bool = False) -> 'Network':
-        """
+        r"""
         Normalized non-reciprocity metric.
 
         This is a port-by-port measure of how non-reciprocal a n-port
@@ -3345,7 +3347,7 @@ class Network(object):
 
         .. math::
 
-            (S_{mn} - S_{nm}) / \\sqrt ( S_{mn} S_{nm} )
+            (S_{mn} - S_{nm}) / \sqrt ( S_{mn} S_{nm} )
 
         Parameters
         ----------
@@ -3579,9 +3581,9 @@ class Network(object):
 
         Returns
         -------
-        t : class:`numpy.ndarray`
+        t : class:`npy.ndarray`
             Time vector
-        y : class:`numpy.ndarray`
+        y : class:`npy.ndarray`
             Impulse response
 
         See Also
@@ -3635,9 +3637,9 @@ class Network(object):
 
         Returns
         -------
-        t : class:`numpy.ndarray`
+        t : class:`npy.ndarray`
             Time vector
-        y : class:`numpy.ndarray`
+        y : class:`npy.ndarray`
             Step response
 
         Raises
@@ -3668,7 +3670,7 @@ class Network(object):
 
     # Network Active s/z/y/vswr parameters
     def s_active(self, a: npy.ndarray) -> npy.ndarray:
-        """
+        r"""
         Returns the active s-parameters of the network for a defined wave excitation a.
 
         The active s-parameter at a port is the reflection coefficients
@@ -3679,7 +3681,7 @@ class Network(object):
 
         .. math::
 
-           \mathrm{active(s)}_{m} = \sum_{i=1}^N s_{mi}\\frac{a_i}{a_m}
+           \mathrm{active(s)}_{m} = \sum_{i=1}^N s_{mi}\frac{a_i}{a_m}
 
         where :math:`s` are the scattering parameters and :math:`N` the number of ports
 
@@ -3709,14 +3711,14 @@ class Network(object):
         return s2s_active(self.s, a)
 
     def z_active(self, a: npy.ndarray) -> npy.ndarray:
-        """
+        r"""
         Returns the active Z-parameters of the network for a defined wave excitation a.
 
         The active Z-parameters are defined by:
 
         .. math::
 
-           \mathrm{active}(z)_{m} = z_{0,m} \\frac{1 + \mathrm{active}(s)_m}{1 - \mathrm{active}(s)_m}
+           \mathrm{active}(z)_{m} = z_{0,m} \frac{1 + \mathrm{active}(s)_m}{1 - \mathrm{active}(s)_m}
 
         where :math:`z_{0,m}` is the characteristic impedance and
         :math:`\mathrm{active}(s)_m` the active S-parameter of port :math:`m`.
@@ -3740,14 +3742,14 @@ class Network(object):
         return s2z_active(self.s, self.z0, a)
 
     def y_active(self, a: npy.ndarray) -> npy.ndarray:
-        """
+        r"""
         Returns the active Y-parameters of the network for a defined wave excitation a.
 
         The active Y-parameters are defined by:
 
         .. math::
 
-           \mathrm{active}(y)_{m} = y_{0,m} \\frac{1 - \mathrm{active}(s)_m}{1 + \mathrm{active}(s)_m}
+           \mathrm{active}(y)_{m} = y_{0,m} \frac{1 - \mathrm{active}(s)_m}{1 + \mathrm{active}(s)_m}
 
         where :math:`y_{0,m}` is the characteristic admittance and
         :math:`\mathrm{active}(s)_m` the active S-parameter of port :math:`m`.
@@ -3771,14 +3773,14 @@ class Network(object):
         return s2y_active(self.s, self.z0, a)
 
     def vswr_active(self, a: npy.ndarray) -> npy.ndarray:
-        """
+        r"""
         Returns the active VSWR of the network for a defined wave excitation a.
 
         The active VSWR is defined by :
 
         .. math::
 
-           \mathrm{active}(vswr)_{m} = \\frac{1 + |\mathrm{active}(s)_m|}{1 - |\mathrm{active}(s)_m|}
+           \mathrm{active}(vswr)_{m} = \frac{1 + |\mathrm{active}(s)_m|}{1 - |\mathrm{active}(s)_m|}
 
         where :math:`\mathrm{active}(s)_m` the active S-parameter of port :math:`m`.
 
@@ -4254,7 +4256,7 @@ def de_embed(ntwkA: Network, ntwkB: Network) -> Network:
 
 
 def stitch(ntwkA: Network, ntwkB: Network, **kwargs) -> Network:
-    """
+    r"""
     Stitches ntwkA and ntwkB together.
 
     Concatenates two networks' data. Given two networks that cover
@@ -4520,7 +4522,7 @@ def one_port_2_two_port(ntwk: Network) -> Network:
 
 
 def chopinhalf(ntwk: Network, *args, **kwargs) -> Network:
-    """
+    r"""
     Chops a sandwich of identical, reciprocal 2-ports in half.
 
     Given two identical, reciprocal 2-ports measured in series,
@@ -4533,18 +4535,18 @@ def chopinhalf(ntwk: Network, *args, **kwargs) -> Network:
 
     .. math::
 
-        B = A\\cdot A
+        B = A\cdot A
 
     Return A, where A port2 is connected to A port1. The result may
     be found through signal flow graph analysis and is,
 
     .. math::
 
-        a_{11} = \\frac{b_{11}}{1+b_{12}}
+        a_{11} = \frac{b_{11}}{1+b_{12}}
 
-        a_{22} = \\frac{b_{22}}{1+b_{12}}
+        a_{22} = \frac{b_{22}}{1+b_{12}}
 
-        a_{12}^2 = b_{21}(1-\\frac{b_{11}b_{22}}{(1+b_{12})^2}
+        a_{12}^2 = b_{21}(1-\frac{b_{11}b_{22}}{(1+b_{12})^2}
 
     Parameters
     ----------
@@ -4681,7 +4683,7 @@ def subnetwork(ntwk: Network, ports: int, offby:int = 1) -> Network:
 
 ## Building composit networks from sub-networks
 def n_oneports_2_nport(ntwk_list: Sequence[Network], *args, **kwargs) -> Network:
-    """
+    r"""
     Builds a N-port Network from list of N one-ports
 
     Parameters
@@ -4711,7 +4713,7 @@ def n_oneports_2_nport(ntwk_list: Sequence[Network], *args, **kwargs) -> Network
 
 def n_twoports_2_nport(ntwk_list: Sequence[Network], nports: int,
         offby:int = 1, **kwargs) -> Network:
-    """
+    r"""
     Builds a N-port Network from list of two-ports
 
     This  method was made to reconstruct a n-port network from 2-port
@@ -4767,7 +4769,7 @@ def n_twoports_2_nport(ntwk_list: Sequence[Network], nports: int,
 
 
 def four_oneports_2_twoport(s11: Network, s12: Network, s21: Network, s22: Network, *args, **kwargs) -> Network:
-    """
+    r"""
     Builds a 2-port Network from list of four 1-ports
 
     Parameters
@@ -4798,7 +4800,7 @@ def four_oneports_2_twoport(s11: Network, s12: Network, s21: Network, s22: Netwo
 
 def three_twoports_2_threeport(ntwk_triplet: Sequence[Network], auto_order:bool = True, *args,
                                **kwargs) -> Network:
-    """
+    r"""
     Creates 3-port from  three 2-port Networks
 
     This function provides a convenient way to build a 3-port Network
@@ -5020,7 +5022,7 @@ def innerconnect_s(A: npy.ndarray, k: int, l: int) -> npy.ndarray:
 
 ## network parameter conversion
 def s2z(s: npy.ndarray, z0: NumberLike = 50, s_def: str = S_DEF_DEFAULT) -> npy.ndarray:
-    """
+    r"""
     Convert scattering parameters [#]_ to impedance parameters [#]_
 
 
@@ -5029,14 +5031,14 @@ def s2z(s: npy.ndarray, z0: NumberLike = 50, s_def: str = S_DEF_DEFAULT) -> npy.
     .. math::
         Z = F^{-1} (1 - S)^{-1} (S G + G^*) F
 
-    where :math:`G = diag([Z_0])` and :math:`F = diag([1/2\\sqrt{|Re(Z_0)|}])`
+    where :math:`G = diag([Z_0])` and :math:`F = diag([1/2\sqrt{|Re(Z_0)|}])`
 
     For pseudo-waves, Eq.(74) from [#Marks]_:
 
     .. math::
         Z = (1 - U^{-1} S U)^{-1}  (1 + U^{-1} S U) G
 
-    where :math:`U = \\sqrt{Re(Z_0)}/|Z_0|`
+    where :math:`U = \sqrt{Re(Z_0)}/|Z_0|`
 
     Parameters
     ----------
@@ -5070,7 +5072,7 @@ def s2z(s: npy.ndarray, z0: NumberLike = 50, s_def: str = S_DEF_DEFAULT) -> npy.
 
     # Add a small real part in case of pure imaginary char impedance
     # to prevent numerical errors for both pseudo and power waves definitions
-    z0 = z0.astype(dtype=npy.complex)
+    z0 = z0.astype(dtype=complex)
     z0[z0.real == 0] += ZERO
 
     s = s.copy()  # to prevent the original array from being altered
@@ -5171,7 +5173,7 @@ def s2y(s: npy.ndarray, z0:NumberLike = 50, s_def: str = S_DEF_DEFAULT) -> npy.n
 
     # Add a small real part in case of pure imaginary char impedance
     # to prevent numerical errors for both pseudo and power waves definitions
-    z0 = z0.astype(dtype=npy.complex)
+    z0 = z0.astype(dtype=complex)
     z0[z0.real == 0] += ZERO
 
     s = s.copy()  # to prevent the original array from being altered
@@ -5232,7 +5234,7 @@ def s2t(s: npy.ndarray) -> npy.ndarray:
 
     Returns
     -------
-    t : numpy.ndarray
+    t : npy.ndarray
         scattering transfer parameters (aka wave cascading matrix)
 
     See Also
@@ -5287,7 +5289,7 @@ def s2t(s: npy.ndarray) -> npy.ndarray:
 
 
 def z2s(z: NumberLike, z0:NumberLike = 50, s_def: str = S_DEF_DEFAULT) -> npy.ndarray:
-    """
+    r"""
     convert impedance parameters [#]_ to scattering parameters [#]_
 
     For power-waves, Eq.(18) from [#Kurokawa]_:
@@ -5295,14 +5297,14 @@ def z2s(z: NumberLike, z0:NumberLike = 50, s_def: str = S_DEF_DEFAULT) -> npy.nd
     .. math::
         S = F (Z – G^*) (Z + G)^{-1} F^{-1}
 
-    where :math:`G = diag([Z_0])` and :math:`F = diag([1/2\\sqrt{|Re(Z_0)|}])`
+    where :math:`G = diag([Z_0])` and :math:`F = diag([1/2\sqrt{|Re(Z_0)|}])`
 
     For pseudo-waves, Eq.(73) from [#Marks]_:
 
     .. math::
         S = U (Z - G) (Z + G)^{-1}  U^{-1}
 
-    where :math:`U = \\sqrt{Re(Z_0)}/|Z_0|`
+    where :math:`U = \sqrt{Re(Z_0)}/|Z_0|`
 
 
     Parameters
@@ -5337,7 +5339,7 @@ def z2s(z: NumberLike, z0:NumberLike = 50, s_def: str = S_DEF_DEFAULT) -> npy.nd
 
     # Add a small real part in case of pure imaginary char impedance
     # to prevent numerical errors for both pseudo and power waves definitions
-    z0 = z0.astype(dtype=npy.complex)
+    z0 = z0.astype(dtype=complex)
     z0[z0.real == 0] += ZERO
 
     if s_def == 'power':
@@ -5529,7 +5531,7 @@ def a2z(a: npy.ndarray) -> npy.ndarray:
 
     Returns
     -------
-    z : numpy.ndarray
+    z : npy.ndarray
         impedance parameters
 
     See Also
@@ -5573,7 +5575,7 @@ def z2a(z: npy.ndarray) -> npy.ndarray:
 
     Returns
     -------
-    abcd : numpy.ndarray
+    abcd : npy.ndarray
         scattering transfer parameters (aka wave cascading matrix)
 
     See Also
@@ -5624,7 +5626,7 @@ def s2a(s: npy.ndarray, z0: NumberLike = 50) -> npy.ndarray:
 
     Returns
     -------
-    abcd : numpy.ndarray
+    abcd : npy.ndarray
         scattering transfer parameters (aka wave cascading matrix)
 
     References
@@ -5655,7 +5657,7 @@ def s2a(s: npy.ndarray, z0: NumberLike = 50) -> npy.ndarray:
 
 
 def y2s(y: npy.ndarray, z0:NumberLike = 50, s_def: str = S_DEF_DEFAULT) -> Network:
-    """
+    r"""
     convert admittance parameters [#]_ to scattering parameters [#]_
 
     For power-waves, from [#Kurokawa]_:
@@ -5663,14 +5665,14 @@ def y2s(y: npy.ndarray, z0:NumberLike = 50, s_def: str = S_DEF_DEFAULT) -> Netwo
     .. math::
         S = F (1 – G Y) (1 + G Y)^{-1} F^{-1}
 
-    where :math:`G = diag([Z_0])` and :math:`F = diag([1/2\\sqrt{|Re(Z_0)|}])`
+    where :math:`G = diag([Z_0])` and :math:`F = diag([1/2\sqrt{|Re(Z_0)|}])`
 
     For pseudo-waves, Eq.(73) from [#Marks]_:
 
     .. math::
         S = U (Y^{-1} - G) (Y^{-1} + G)^{-1}  U^{-1}
 
-    where :math:`U = \\sqrt{Re(Z_0)}/|Z_0|`
+    where :math:`U = \sqrt{Re(Z_0)}/|Z_0|`
 
 
     Parameters
@@ -5724,7 +5726,7 @@ def y2s(y: npy.ndarray, z0:NumberLike = 50, s_def: str = S_DEF_DEFAULT) -> Netwo
 
     # Add a small real part in case of pure imaginary char impedance
     # to prevent numerical errors for both pseudo and power waves definitions
-    z0 = z0.astype(dtype=npy.complex)
+    z0 = z0.astype(dtype=complex)
     z0[z0.real == 0] += ZERO
 
     # The following is a vectorized version of a for loop for all frequencies.
@@ -6025,7 +6027,7 @@ def h2z(h: npy.ndarray) -> npy.ndarray:
 
     Returns
     -------
-    z : numpy.ndarray
+    z : npy.ndarray
         impedance parameters
 
     See Also
@@ -6118,7 +6120,7 @@ def z2h(z: npy.ndarray) -> npy.ndarray:
 
     Returns
     -------
-    h : numpy.ndarray
+    h : npy.ndarray
         hybrid parameters
 
     See Also
@@ -6157,7 +6159,7 @@ def z2h(z: npy.ndarray) -> npy.ndarray:
 
 ## these methods are used in the secondary properties
 def passivity(s: npy.ndarray) -> npy.ndarray:
-    """
+    r"""
     Passivity metric for a multi-port network.
 
     A metric which is proportional to the amount of power lost in a
@@ -6179,9 +6181,9 @@ def passivity(s: npy.ndarray) -> npy.ndarray:
 
     .. math::
 
-            \\sqrt( S^H \\cdot S)
+            \sqrt( S^H \cdot S)
 
-    where :math:`H` is conjugate transpose of S, and :math:`\\cdot`
+    where :math:`H` is conjugate transpose of S, and :math:`\cdot`
     is dot product.
 
     Note
@@ -6248,7 +6250,7 @@ def reciprocity(s: npy.ndarray) -> npy.ndarray:
 
 ## renormalize
 def renormalize_s(s: npy.ndarray, z_old: NumberLike, z_new: NumberLike, s_def:str = S_DEF_DEFAULT) -> npy.ndarray:
-    
+
     """
     Renormalize a s-parameter matrix given old and new port impedances
 
@@ -6479,6 +6481,14 @@ def check_frequency_equal(ntwkA: Network, ntwkB: Network) -> None:
         raise IndexError('Networks don\'t have matching frequency. See `Network.interpolate`')
 
 
+def check_frequency_exist(ntwk) -> None:
+    """
+    Check if a Network has a non-zero Frequency.
+    """
+    if assert_frequency_exist(ntwk) == False:
+        raise ValueError('Network has no Frequency. Frequency points must be defined.')
+
+
 def check_z0_equal(ntwkA: Network, ntwkB: Network) -> None:
     """
     checks if two Networks have same port impedances
@@ -6501,6 +6511,18 @@ def assert_frequency_equal(ntwkA: Network, ntwkB: Network) -> bool:
     """
     """
     return (ntwkA.frequency == ntwkB.frequency)
+
+
+def assert_frequency_exist(ntwk: Network) -> bool:
+    """
+    Test if the Network Frequency is defined.
+
+    Returns
+    -------
+    bool: boolean
+
+    """
+    return bool(len(ntwk.frequency))
 
 
 def assert_z0_equal(ntwkA: Network, ntwkB: Network) -> bool:
@@ -6597,7 +6619,7 @@ def two_port_reflect(ntwk1: Network, ntwk2: Network = None) -> Network:
     return result
 
 def s2s_active(s: npy.ndarray, a:npy.ndarray) -> npy.ndarray:
-    """
+    r"""
     Returns active s-parameters for a defined wave excitation a.
 
     The active s-parameter at a port is the reflection coefficients
@@ -6648,7 +6670,7 @@ def s2s_active(s: npy.ndarray, a:npy.ndarray) -> npy.ndarray:
     return s_act  # shape : (n_freqs, n_ports)
 
 def s2z_active(s: npy.ndarray, z0: NumberLike, a: npy.ndarray) -> npy.ndarray:
-    """
+    r"""
     Returns the active Z-parameters for a defined wave excitation a.
 
     The active Z-parameters are defined by:
@@ -6694,7 +6716,7 @@ def s2z_active(s: npy.ndarray, z0: NumberLike, a: npy.ndarray) -> npy.ndarray:
     return z_act
 
 def s2y_active(s: npy.ndarray, z0: NumberLike, a: npy.ndarray) -> npy.ndarray:
-    """
+    r"""
     Returns the active Y-parameters for a defined wave excitation a.
 
     The active Y-parameters are defined by:
@@ -6738,7 +6760,7 @@ def s2y_active(s: npy.ndarray, z0: NumberLike, a: npy.ndarray) -> npy.ndarray:
     return y_act
 
 def s2vswr_active(s: npy.ndarray, a: npy.ndarray) -> npy.ndarray:
-    """
+    r"""
     Returns the active VSWR for a defined wave excitation a..
 
     The active VSWR is defined by :
