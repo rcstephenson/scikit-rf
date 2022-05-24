@@ -34,12 +34,6 @@ class CircuitTestConstructor(unittest.TestCase):
         _ntwk1.name = ''
         self.assertRaises(AttributeError, rf.Circuit, connections)
 
-    def test_port_has_correct_name(self):
-        """
-        Port object should have the string 'port' in its name.
-        """
-        self.assertRaises(ValueError, rf.Circuit.Port, self.freq, name='test')
-
     def test_all_networks_have_same_frequency(self):
         """
         Check that a Network with a different frequency than the other
@@ -52,6 +46,16 @@ class CircuitTestConstructor(unittest.TestCase):
 
         _ntwk1.frequency = rf.Frequency(start=1, stop=1, npoints=1)
         self.assertRaises(AttributeError, rf.Circuit, connections)
+
+    def test_no_duplicate_node(self):
+        """
+        Check that a circuit description has no duplicated (network, port)
+        """
+        # (port1, 0) is found twice in the connections description
+        connections = [[(self.port1, 0), (self.ntwk1, 0)],
+                       [(self.ntwk1, 1), (self.ntwk2, 0)],
+                       [(self.ntwk2, 1), (self.port1, 0)]]
+        self.assertRaises(AttributeError, rf.Circuit, connections)        
 
     def test_s_active(self):
         """
@@ -808,7 +812,7 @@ class CircuitTestGraph(unittest.TestCase):
     """
     def test_is_networkx_available(self):
         'The networkx package should be available to run these tests'
-        self.failUnless('networkx' in sys.modules)
+        self.assertTrue('networkx' in sys.modules)
 
     def setUp(self):
         """
@@ -838,15 +842,15 @@ class CircuitTestGraph(unittest.TestCase):
     def test_intersection_dict(self):
         inter_dict = self.C.intersections_dict
         # should have 3 intersections
-        self.assert_(len(inter_dict) == 3)
+        self.assertTrue(len(inter_dict) == 3)
         # All intersections should have at least 2 edges
         for it in inter_dict.items():
             k, cnx = it
-            self.assert_(len(cnx) >= 2)
+            self.assertTrue(len(cnx) >= 2)
 
     def test_edge_labels(self):
         edge_labels = self.C.edge_labels
-        self.assert_(len(edge_labels) == 7)
+        self.assertTrue(len(edge_labels) == 7)
 
 
 class CircuitTestComplexCharacteristicImpedance(unittest.TestCase):
